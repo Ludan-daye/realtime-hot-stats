@@ -88,6 +88,8 @@
 本项目基于 Apache Spark Structured Streaming 框架，结合 Apache Kafka 消息队列，构建了一个面向电商场景的实时热门统计系统。系统实现了实时热门商品 Top-N 排行和实时热搜词统计两大核心功能，采用滑动窗口聚合与 Watermark 机制处理乱序和迟到数据。同时，本项目实现了基于 Spark DataFrame API 的批处理分析，从延迟、吞吐量等维度对流处理与批处理进行了定量对比。实验结果表明，流处理可在秒级延迟内输出实时统计结果，而批处理在吞吐量方面更具优势，两者适用于不同的业务场景。本报告详细阐述了系统的架构设计、关键技术原理（DAG 执行机制、内存计算、惰性求值）、数据处理流程、性能优化手段及容错机制，并通过 Streamlit 可视化仪表盘展示实时分析结果。
 
 \noindent\textbf{关键词}：Spark Structured Streaming；Kafka；实时计算；滑动窗口；流批对比
+
+\noindent\textbf{项目代码}：\url{https://github.com/Ludan-daye/realtime-hot-stats}
 \end{abstract}
 
 \tableofcontents
@@ -99,9 +101,11 @@
 
 \subsection{课题背景}
 
-随着互联网和移动互联网的快速发展，电商平台每天产生海量的用户行为数据。据统计，大型电商平台在促销期间每秒可产生数十万条用户浏览、搜索和购买事件。如何从这些持续产生的数据流中实时提取有价值的信息——如当前最热门的商品、用户最关注的搜索词——已成为电商运营和决策的关键需求。
+随着互联网和移动互联网的快速发展，电商平台每天产生海量的用户行为数据。据统计，大型电商平台在促销期间每秒可产生数十万条用户浏览、搜索和购买事件。如何从这些持续产生的数据流中实时提取有价值的信息——如当前最热门的商品、用户最关注的搜索词——已成为电商运营和决策的关键需求。实时热门统计在电商运营中具有多方面的应用价值：运营团队可以据此实时调整首页推荐位和广告投放策略；供应链系统可以基于热门趋势提前备货，减少缺货风险；营销团队可以在热点出现的第一时间策划促销活动，最大化流量转化率。
 
-传统的批处理方式（如 MapReduce）需要等待数据收集完毕后才能开始处理，存在较高的延迟，无法满足实时分析的需求。而流式计算框架（如 Apache Spark Structured Streaming）通过微批次或连续处理模式，能够在数据到达后秒级输出分析结果，为实时监控和即时决策提供了技术支撑。
+传统的批处理方式（如 Hadoop MapReduce）需要等待数据收集完毕后才能开始处理，通常以小时甚至天为周期运行，存在较高的延迟，无法满足实时分析的需求。MapReduce 的计算模型要求每次 Map 和 Reduce 之间的中间数据都写入 HDFS 磁盘，在迭代计算和多阶段流水线场景下性能损耗尤为严重。而流式计算框架（如 Apache Spark Structured Streaming）通过微批次（Micro-Batch）或连续处理（Continuous Processing）模式，能够在数据到达后秒级输出分析结果，为实时监控和即时决策提供了技术支撑。
+
+随着"摩尔定律"的逐渐失效，单机计算能力的增长放缓，分布式并行编程已成为处理海量数据的必然选择\cite{dean2004}。Apache Spark 作为新一代大数据计算引擎，凭借其内存计算、统一的编程模型和丰富的生态系统，已成为学术界和工业界广泛采用的分布式计算框架\cite{zaharia2016}。Spark Structured Streaming 在 Spark SQL 引擎之上提供了声明式的流处理 API，使得开发者可以像编写批处理查询一样编写流处理逻辑，大幅降低了流式应用的开发门槛\cite{armbrust2018}。
 
 \subsection{项目目标}
 
@@ -116,7 +120,7 @@
 
 \subsection{技术栈概述}
 
-本项目涉及的分布式技术栈如表~\ref{tab:tech-stack} 所示，覆盖了分布式存储、分布式计算、资源调度和数据接口四个方面。
+本项目涉及的分布式技术栈如表~\ref{tab:tech-stack} 所示，覆盖了分布式存储、分布式计算、资源调度和数据接口四个方面。本项目的完整源代码托管于 GitHub 仓库：\url{https://github.com/Ludan-daye/realtime-hot-stats}，采用 Git 进行版本控制，便于团队协作和代码审查。
 
 \begin{table}[H]
 \centering
@@ -141,7 +145,7 @@
 
 \subsection{整体架构}
 
-系统采用经典的 Lambda 架构思想，同时支持实时流处理路径（Speed Layer）和批处理路径（Batch Layer），如图~\ref{fig:architecture} 所示。
+系统采用经典的 Lambda 架构思想，同时支持实时流处理路径（Speed Layer）和批处理路径（Batch Layer），如图~\ref{fig:architecture} 所示。Lambda 架构由 Nathan Marz 提出，其核心理念是将数据处理分为三层：批处理层负责对全量历史数据进行精确计算，速度层负责对最新增量数据进行低延迟近似计算，服务层负责合并两者的结果对外提供查询。本系统在此基础上进行了简化，保留了速度层（Spark Streaming）和批处理层（Spark Batch）的双路径设计，并通过 Streamlit 仪表盘作为统一的服务层展示两路结果。
 
 \begin{figure}[H]
 \centering
@@ -217,6 +221,10 @@
 
 其中 \texttt{timestamp} 为事件时间（Event Time），用于窗口聚合；\texttt{producer\_timestamp} 为消息发送时间，用于计算端到端延迟。两个字段的分离使得系统能够模拟迟到数据以验证 Watermark 机制。
 
+消息设计遵循了以下原则：（1）\textbf{事件溯源}：每条消息包含完整的事件上下文（用户、商品/关键词、时间、平台等），无需回查外部系统即可完成聚合计算；（2）\textbf{Schema 显式定义}：在 Spark 端使用 \texttt{StructType} 显式定义 Schema，而非使用 \texttt{inferSchema}，避免 Schema 推断带来的性能开销和类型不确定性；（3）\textbf{分区策略}：每个 Topic 设置 3 个分区，使 Spark 可以分配多个 Task 并行消费，提升读取吞吐量。在生产环境中，分区数应根据消费者数量和数据量进一步调优。
+
+\texttt{user\_browse} 中的 \texttt{event\_type} 字段区分了四种用户行为：\texttt{view}（浏览）、\texttt{click}（点击）、\texttt{add\_cart}（加购）和 \texttt{purchase}（购买），其生成比例为 50:30:15:5，符合电商漏斗模型中从浏览到购买逐级递减的特征。\texttt{user\_search} 中的 \texttt{platform} 字段记录了用户的搜索设备类型（mobile/pc/tablet），可用于后续的多维分析。
+
 \subsection{Docker 容器化部署}
 
 系统使用 Docker Compose 编排基础设施，实现一键部署：
@@ -227,7 +235,9 @@ make producer           # 启动数据生产者
 make submit-hot-products  # 提交流处理任务
 \end{lstlisting}
 
-Kafka 采用 Apache 官方镜像 \texttt{apache/kafka:3.9.0}，以 KRaft 模式运行（无需 Zookeeper），简化了单节点部署的复杂度。Spark 在本地以 \texttt{local[2]} 模式运行，利用本机多核并行处理。
+Kafka 采用 Apache 官方镜像 \texttt{apache/kafka:3.9.0}，以 KRaft（Kafka Raft）模式运行。KRaft 是 Kafka 3.0 引入的新型元数据管理协议，使用 Raft 共识算法替代了传统的 ZooKeeper 外部依赖\cite{kreps2011}。在本项目的单节点场景下，KRaft 模式将 Broker 和 Controller 合并在同一进程中运行，显著简化了部署拓扑：无需额外启动 ZooKeeper 容器，减少了资源占用和运维复杂度。配置中通过 \texttt{CLUSTER\_ID} 环境变量指定集群标识，\texttt{KAFKA\_PROCESS\_ROLES=broker,controller} 使单节点同时承担数据服务和元数据管理职责。
+
+Spark 在本地以 \texttt{local[2]} 模式运行，分配 2 个线程模拟 2 个 Worker 核心，利用本机多核并行处理。Spark 连接 Kafka 所需的 \texttt{spark-sql-kafka-0-10} 连接器通过 \texttt{--packages} 参数在运行时自动下载，无需手动管理 JAR 依赖。整个环境的启动和管理通过 Makefile 封装为一组语义化命令，降低了使用门槛。
 
 % =================================================================
 \section{关键技术原理}
@@ -287,6 +297,8 @@ Spark 将用户编写的数据处理逻辑编译为一个有向无环图（Direc
 
 Spark 的 DAG 调度器（DAGScheduler）会将 DAG 在 Shuffle 边界处切分为多个 Stage，每个 Stage 内的任务可以并行执行，从而最大化计算并行度。
 
+DAG 执行机制的优势体现在多个层面。首先，\textbf{流水线优化}（Pipeline Optimization）：Stage 内部的多个窄依赖操作会被合并为一条流水线，数据在单个 Task 中连续经过所有操作，无需中间物化（Materialization），减少了内存分配和数据序列化的开销。其次，\textbf{Shuffle 优化}：Spark 在 Shuffle 阶段使用基于排序的 Shuffle Manager（Sort Shuffle Manager），将同一分区的数据合并写入单个文件，避免了早期 Hash Shuffle 产生大量小文件的问题。在本项目中，由于将 \texttt{spark.sql.shuffle.partitions} 设为 4（而非默认的 200），每次 Shuffle 仅产生 4 个分区的数据文件，显著减少了文件系统操作和网络传输量。最后，\textbf{Catalyst 优化器}：Spark SQL 的 Catalyst 优化器在生成物理执行计划之前，会对逻辑计划进行多轮优化，包括谓词下推（Predicate Pushdown）、列裁剪（Column Pruning）、常量折叠（Constant Folding）等。在本项目中，Catalyst 会自动将 Kafka 消息中未使用的字段（如 \texttt{key}、\texttt{partition}、\texttt{offset}）在读取阶段即行裁剪，减少不必要的数据传输。
+
 \subsection{内存计算（Memory-based Computing）}
 
 Spark 相较于 Hadoop MapReduce 的核心优势在于内存计算。图~\ref{fig:memory-vs-disk} 对比了两种计算模型的数据流：
@@ -328,8 +340,8 @@ Spark 相较于 Hadoop MapReduce 的核心优势在于内存计算。图~\ref{fi
 \draw[arrow] (sp_t3) -- (sp_action);
 
 % 注释
-\node[right=0.3cm of mr_disk1, font=\scriptsize, text=red] {每次中间结果\\写入磁盘};
-\node[left=0.3cm of sp_t2, font=\scriptsize, text=blue!70!black] {中间结果\\保持在内存};
+\node[right=0.3cm of mr_disk1, font=\scriptsize, text=red, align=left] {每次中间结果\\写入磁盘};
+\node[left=0.3cm of sp_t2, font=\scriptsize, text=blue!70!black, align=left] {中间结果\\保持在内存};
 
 \end{tikzpicture}
 \caption{MapReduce vs Spark 数据流对比}
@@ -365,6 +377,10 @@ query = windowed.writeStream.foreachBatch(...).start()    # 触发执行！
 
 惰性求值的优势在于：Spark 可以在执行前对整个 DAG 进行全局优化（如谓词下推、列裁剪、Stage 合并），避免不必要的中间计算。
 
+值得注意的是，惰性求值在流处理场景中具有特殊意义。在传统的即时求值（Eager Evaluation）模式下，每一步操作都会立即执行并产生中间结果，这对于流处理来说意味着大量的重复计算。而 Spark 的惰性求值允许引擎将整个流处理管道作为一个完整的逻辑计划来分析和优化，只有当微批次触发（每 10 秒）时才将优化后的物理计划应用于当前批次的数据。这种"先规划后执行"的策略，使得 Spark 能够在保持代码简洁性的同时实现高效的执行性能。
+
+此外，惰性求值还为用户提供了\textbf{容错的语义保证}：由于 Transformation 仅描述计算逻辑而不执行计算，Spark 可以在 Task 失败时，根据 DAG 的血缘关系（Lineage）重新计算丢失的分区数据，而无需从头重新执行整个流水线。这一机制是 Spark 实现 Exactly-Once 语义的基础之一。
+
 % =================================================================
 \section{数据处理流程}
 % =================================================================
@@ -378,6 +394,8 @@ query = windowed.writeStream.foreachBatch(...).start()    # 触发执行！
 为模拟真实场景中的"热门效应"（少数商品和关键词占据大量流量），数据生成器采用加权随机抽样。每个商品和关键词预设了一个权重值（1--10），权重越高被选中的概率越大。
 
 例如"无线蓝牙耳机"权重为 10，"电饭煲"权重为 3，前者被用户浏览的概率约为后者的 $10/3 \approx 3.3$ 倍。这种分布近似于 Zipf 分布，符合现实世界中用户行为的长尾特征。
+
+具体而言，数据生成器维护了两个字典文件：\texttt{products.json}（50 个商品，涵盖数码、运动、家电、美妆等 15 个分类）和 \texttt{search\_keywords.json}（40 个搜索关键词）。Python 的 \texttt{random.choices} 函数根据预设权重进行加权随机抽样，确保高权重商品和关键词具有更高的出现频率。数据生产者还支持通过命令行参数 \texttt{--rate} 动态调节发送速率（默认 100 条/秒），这为后续的性能测试提供了灵活的负载控制能力。浏览事件和搜索事件的发送比例固定为 7:3，反映了电商场景中浏览行为远多于搜索行为的真实特点。
 
 \subsubsection{迟到数据模拟}
 
@@ -430,6 +448,8 @@ Watermark（水位线）用于处理乱序到达的事件。本项目设置 Wate
 \end{equation}
 
 当某个窗口的结束时间 $< $ Watermark 时，该窗口的状态会被清除，结果会被最终输出。
+
+Watermark 的选取需要在\textbf{数据完整性}和\textbf{状态管理开销}之间权衡。较大的 Watermark 阈值能够容纳更多迟到数据，提升结果的准确性，但代价是需要更长时间维护窗口状态，增加内存消耗和结果输出延迟；较小的阈值可以更快地释放旧窗口状态，降低资源占用，但可能丢弃合理的迟到数据。本项目选择 30 秒作为 Watermark 阈值，这是基于以下考量：数据生成器中迟到数据的最大延迟为 60 秒，10\% 的迟到数据比例中，延迟在 10--30 秒之间的数据约占 33\%，因此 30 秒的阈值能够覆盖大部分迟到数据，同时将状态维护的时间窗口控制在可接受的范围内。
 
 \subsubsection{滑动窗口}
 
@@ -517,6 +537,8 @@ Spark 运行模式 & local[2] \\
 \end{table}
 
 结果与商品字典中的权重分布一致：手机壳（权重 9）、运动鞋（权重 9）、机械键盘（权重 8）位列前三，验证了加权随机数据生成器的正确性。
+
+从实验过程可以观察到，流处理结果随时间动态变化：在第 1 个批次（约 10 秒）时，运动鞋以 15 次浏览量排名第一；到第 3 个批次时，运动鞋增长至 46 次，手机壳紧随其后以 44 次排名第二；到第 5 个（最终）批次时，手机壳以 75 次反超运动鞋（74 次）夺得第一。这种排名的实时波动体现了流处理系统"数据驱动、持续更新"的核心特征，与批处理的"一次性全量计算"形成鲜明对比。值得注意的是，由于滑动窗口的重叠效应，同一商品在不同窗口中的计数值可能存在差异，这正是滑动窗口"多角度观察同一时间段数据"的设计意图。
 
 \subsubsection{实时热搜词 Top-10}
 
@@ -616,9 +638,13 @@ Spark 运行模式 & local[2] \\
 \end{table}
 
 \textbf{分析}：
-\begin{itemize}    \item 流处理的核心优势在于\textbf{数据新鲜度}：结果随新数据到来持续更新，首条结果在 $\sim$10 秒内即可输出。
-    \item 批处理的优势在于\textbf{吞吐量}：一次性读取全量数据，充分利用数据局部性，吞吐量可达 6,063 条/秒。
-    \item 在实际生产中，两者通常结合使用（Lambda 架构）：流处理提供实时视图，批处理定期修正累积误差。
+
+从实验数据可以得出以下几点关键结论：
+
+\begin{itemize}    \item \textbf{延迟特性差异显著}：流处理的首条结果延迟仅为 $\sim$10 秒（取决于微批次触发间隔），且后续结果每 10 秒持续更新。批处理则需要等待 8.25 秒处理完全部 50,000 条数据后才能输出第一条结果。当数据量增长到百万级甚至亿级时，批处理的延迟将线性增长，而流处理的延迟保持稳定在微批次间隔附近，这一差异将更为显著。
+    \item \textbf{吞吐量各有侧重}：批处理在本次实验中达到 6,063 条/秒的吞吐量，因为它可以一次性读取全量数据，充分利用数据局部性和批量 I/O 优化。流处理的吞吐量受限于 Producer 发送速率和微批次间隔设置，但其设计目标并非最大化吞吐量，而是在保证低延迟的前提下提供"足够好"的吞吐能力。
+    \item \textbf{资源利用模式不同}：流处理需要持续占用计算资源（CPU、内存），即使在没有新数据到来时也会周期性地检查 Kafka 偏移量。批处理则按需启动，任务完成后释放资源。在资源有限的环境中，可以根据业务对实时性的要求选择合适的处理模式。
+    \item \textbf{实际生产中的互补关系}：在实际生产中，两者通常结合使用（Lambda 架构或 Kappa 架构）。流处理提供实时视图供运营监控和即时决策；批处理定期（如每天凌晨）对全量数据进行重新计算，修正流处理可能因迟到数据或状态管理导致的累积误差，生成精确的离线报表。
 \end{itemize}
 
 \subsection{批处理各阶段耗时}
@@ -642,7 +668,9 @@ Spark 运行模式 & local[2] \\
 \end{tabular}
 \end{table}
 
-数据加载阶段占总耗时的 40.6\%，是最大的瓶颈。这是因为 JSON 格式的解析开销较大；在生产环境中可改用 Parquet 等列式存储格式以显著提升加载速度。
+数据加载阶段占总耗时的 40.6\%，是最大的瓶颈。这是因为 JSON 是一种文本格式，解析时需要逐字符扫描、处理转义字符、推断数据类型，计算开销较大。此外，JSON 文件不支持列式读取——即使查询只涉及 \texttt{product\_id} 和 \texttt{product\_name} 两个字段，也必须将整行数据完整读入并解析。在生产环境中，可改用 Apache Parquet 等列式存储格式，其优势包括：（1）列式压缩（Column-level Compression）可将存储体积减少 60\%--80\%；（2）列裁剪（Column Pruning）允许仅读取查询所需的列，减少磁盘 I/O；（3）二进制编码无需字符解析，CPU 开销显著降低。根据业界经验，从 JSON 切换到 Parquet 后，数据加载速度通常可提升 5--10 倍。
+
+窗口商品统计（2.04 秒）耗时高于全量商品统计（1.12 秒），这是因为滑动窗口聚合需要为每条记录分配到 5 个重叠窗口中（窗口大小 5 分钟 / 滑动步长 1 分钟 = 5 个窗口），相当于将数据量膨胀了 5 倍。热搜词统计（0.48 秒）和分类统计（0.50 秒）耗时较短，因为搜索事件数量仅为浏览事件的 3/7，且聚合维度更简单（无窗口操作）。
 
 % =================================================================
 \section{性能优化手段}
@@ -683,7 +711,7 @@ Spark 运行模式 & local[2] \\
 
 \subsection{Checkpoint 恢复}
 
-Spark Structured Streaming 通过 Checkpoint 机制实现端到端的 Exactly-Once 语义。Checkpoint 目录中保存了以下信息：
+在分布式系统中，节点故障是常态而非异常。一个健壮的流处理系统必须能够在故障发生后自动恢复，且不丢失数据、不重复处理。Spark Structured Streaming 通过 Checkpoint 机制实现端到端的 Exactly-Once 语义，其核心思想是将流处理的关键状态定期持久化到可靠存储中。Checkpoint 目录中保存了以下信息：
 
 \begin{itemize}    \item \textbf{Kafka Offset}：已消费的每个分区的偏移量，确保故障恢复后不重复消费也不丢失数据。
     \item \textbf{State Store}：窗口聚合的中间状态（各窗口各商品的计数值），恢复后继续累加而非从零开始。
@@ -755,7 +783,7 @@ make fault-start    # docker start spark-worker
 
 \subsection{项目总结}
 
-本项目成功构建了一个基于 Spark Structured Streaming + Kafka 的实时热门统计系统，主要成果包括：
+本项目围绕"基于 Spark 的实时数据分析"这一课题，从系统设计、环境搭建、核心开发到性能评估，完成了一个端到端的实时热门统计系统。项目代码已开源于 GitHub（\url{https://github.com/Ludan-daye/realtime-hot-stats}），包含完整的源代码、配置文件、测试脚本和文档。主要成果包括：
 
 \begin{enumerate}    \item 实现了热门商品 Top-10 和热搜词 Top-10 的\textbf{实时统计}，采用滑动窗口和 Watermark 处理乱序数据。
     \item 完成了流处理与批处理的\textbf{定量对比}，批处理吞吐量达 6,063 条/秒，流处理首条结果延迟 $\sim$10 秒。
