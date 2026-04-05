@@ -1,0 +1,34 @@
+# 运行输出
+output/stream_results/*
+output/batch_results/*
+output/checkpoints/*
+!output/stream_results/.gitkeep
+!output/batch_results/.gitkeep
+!output/checkpoints/.gitkeep
+
+# 生成的数据
+data/sample_batch.json
+
+# Python
+__pycache__/
+*.pyc
+.env
+
+# macOS
+.DS_Store
+
+# Docker
+kafka_data/
+
+# LaTeX 编译产物
+report/*.aux
+report/*.log
+report/*.out
+report/*.toc
+report/*.fls
+report/*.fdb_latexmk
+report/*.synctex.gz
+
+# IDE
+.idea/
+.vscode/
