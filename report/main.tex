@@ -149,33 +149,36 @@
 
 \begin{figure}[H]
 \centering
+\resizebox{0.95\textwidth}{!}{%
 \begin{tikzpicture}[
-    node distance=1.5cm and 2cm,
-    box/.style={rectangle, draw, rounded corners, minimum width=2.8cm, minimum height=1cm, align=center, font=\small},
+    node distance=1.2cm and 1.5cm,
+    box/.style={rectangle, draw, rounded corners, minimum width=2.2cm, minimum height=0.9cm, align=center, font=\small},
     data/.style={box, fill=blue!15},
     process/.style={box, fill=orange!20},
     output/.style={box, fill=green!15},
-    arrow/.style={-{Stealth[length=6pt]}, thick},
+    arrow/.style={-{Stealth[length=5pt]}, thick},
 ]
 
 % 数据源层
 \node[data] (producer) {数据生产者\\(Python)};
-\node[data, right=2.5cm of producer] (kafka) {Kafka\\(KRaft 模式)};
+\node[data, right=2cm of producer] (kafka) {Kafka\\(KRaft 模式)};
 
 % 处理层
-\node[process, above right=1.5cm and 1.5cm of kafka] (streaming) {Spark Structured\\Streaming};
-\node[process, below right=1.5cm and 1.5cm of kafka] (batch) {Spark Batch\\(DataFrame API)};
+\node[process, above right=1.2cm and 1.2cm of kafka] (streaming) {Spark Structured\\Streaming};
+\node[process, below right=1.2cm and 1.2cm of kafka] (batch) {Spark Batch\\(DataFrame API)};
 
 % 存储层
-\node[data, below=1cm of producer] (jsonfile) {静态 JSON\\数据文件};
+\node[data, below=0.8cm of producer] (jsonfile) {静态 JSON\\数据文件};
 
 % 输出层
-\node[output, right=2.5cm of streaming] (stream_out) {实时结果\\(JSON)};
-\node[output, right=2.5cm of batch] (batch_out) {批处理结果\\(JSON)};
-\node[output, right=2cm of stream_out] (dashboard) {Streamlit\\仪表盘};
+\node[output, right=1.5cm of streaming] (stream_out) {实时结果\\(JSON)};
+\node[output, right=1.5cm of batch] (batch_out) {批处理结果\\(JSON)};
 
 % Checkpoint
-\node[data, above=0.8cm of streaming] (checkpoint) {Checkpoint\\(容错恢复)};
+\node[data, above=0.6cm of streaming] (checkpoint) {Checkpoint\\(容错恢复)};
+
+% 展示层
+\node[output, below right=0.3cm and 1.2cm of stream_out] (dashboard) {Streamlit\\仪表盘};
 
 % 箭头
 \draw[arrow] (producer) -- node[above, font=\scriptsize]{实时数据流} (kafka);
@@ -185,10 +188,11 @@
 \draw[arrow] (streaming) -- (stream_out);
 \draw[arrow] (batch) -- (batch_out);
 \draw[arrow] (stream_out) -- (dashboard);
-\draw[arrow] (batch_out) -| (dashboard);
+\draw[arrow] (batch_out) -- (dashboard);
 \draw[arrow, dashed] (streaming) -- (checkpoint);
 
-\end{tikzpicture}
+\end{tikzpicture}%
+}
 \caption{系统整体架构图}
 \label{fig:architecture}
 \end{figure}
@@ -251,9 +255,10 @@ Spark 将用户编写的数据处理逻辑编译为一个有向无环图（Direc
 
 \begin{figure}[H]
 \centering
+\resizebox{0.95\textwidth}{!}{%
 \begin{tikzpicture}[
-    node distance=0.8cm and 1.8cm,
-    stage/.style={rectangle, draw, rounded corners, minimum width=2cm, minimum height=0.7cm, align=center, font=\small},
+    node distance=0.6cm and 1cm,
+    stage/.style={rectangle, draw, rounded corners, minimum width=1.8cm, minimum height=0.7cm, align=center, font=\small},
     narrow/.style={stage, fill=blue!10},
     wide/.style={stage, fill=red!10},
     arrow/.style={-{Stealth[length=5pt]}, thick},
@@ -265,10 +270,10 @@ Spark 将用户编写的数据处理逻辑编译为一个有向无环图（Direc
 \node[narrow, right=of parse] (filter) {withWatermark\\(水位线)};
 
 % Shuffle boundary
-\node[right=1.2cm of filter, font=\small\bfseries, text=red] (shuffle) {Shuffle};
+\node[right=0.8cm of filter, font=\small\bfseries, text=red] (shuffle) {Shuffle};
 
 % Stage 2: Wide transformations
-\node[wide, right=1.2cm of shuffle] (group) {groupBy\\+ count};
+\node[wide, right=0.8cm of shuffle] (group) {groupBy\\+ count};
 \node[wide, right=of group] (sort) {orderBy\\(排序)};
 \node[wide, right=of sort] (output) {foreachBatch\\(输出)};
 
@@ -281,10 +286,11 @@ Spark 将用户编写的数据处理逻辑编译为一个有向无环图（Direc
 \draw[arrow] (sort) -- (output);
 
 % Stage labels
-\node[above=0.5cm of parse, font=\small\bfseries, blue!70!black] {Stage 1 (窄依赖)};
-\node[above=0.5cm of sort, font=\small\bfseries, red!70!black] {Stage 2 (宽依赖)};
+\node[above=0.4cm of parse, font=\small\bfseries, blue!70!black] {Stage 1 (窄依赖)};
+\node[above=0.4cm of sort, font=\small\bfseries, red!70!black] {Stage 2 (宽依赖)};
 
-\end{tikzpicture}
+\end{tikzpicture}%
+}
 \caption{热门商品统计的 DAG 执行图}
 \label{fig:dag}
 \end{figure}
@@ -306,8 +312,8 @@ Spark 相较于 Hadoop MapReduce 的核心优势在于内存计算。图~\ref{fi
 \begin{figure}[H]
 \centering
 \begin{tikzpicture}[
-    node distance=0.6cm and 1.5cm,
-    box/.style={rectangle, draw, rounded corners, minimum width=2cm, minimum height=0.6cm, align=center, font=\small},
+    node distance=0.7cm,
+    box/.style={rectangle, draw, rounded corners, minimum width=2.5cm, minimum height=0.7cm, align=center, font=\small},
     mem/.style={box, fill=yellow!20},
     disk/.style={box, fill=gray!20},
     arrow/.style={-{Stealth[length=5pt]}, thick},
@@ -315,7 +321,7 @@ Spark 相较于 Hadoop MapReduce 的核心优势在于内存计算。图~\ref{fi
 
 % MapReduce 路径
 \node[font=\small\bfseries] (mr_title) {MapReduce};
-\node[disk, below=0.3cm of mr_title] (mr_input) {HDFS 读取};
+\node[disk, below=0.4cm of mr_title] (mr_input) {HDFS 读取};
 \node[mem, below=of mr_input] (mr_map) {Map};
 \node[disk, below=of mr_map] (mr_disk1) {写入磁盘};
 \node[mem, below=of mr_disk1] (mr_reduce) {Reduce};
@@ -327,8 +333,8 @@ Spark 相较于 Hadoop MapReduce 的核心优势在于内存计算。图~\ref{fi
 \draw[arrow] (mr_reduce) -- (mr_disk2);
 
 % Spark 路径
-\node[font=\small\bfseries, right=4cm of mr_title] (sp_title) {Spark};
-\node[disk, below=0.3cm of sp_title] (sp_input) {数据源读取};
+\node[font=\small\bfseries, right=5cm of mr_title] (sp_title) {Spark};
+\node[disk, below=0.4cm of sp_title] (sp_input) {数据源读取};
 \node[mem, below=of sp_input] (sp_t1) {Transformation 1};
 \node[mem, below=of sp_t1] (sp_t2) {Transformation 2};
 \node[mem, below=of sp_t2] (sp_t3) {Transformation N};
@@ -339,9 +345,9 @@ Spark 相较于 Hadoop MapReduce 的核心优势在于内存计算。图~\ref{fi
 \draw[arrow] (sp_t2) -- (sp_t3);
 \draw[arrow] (sp_t3) -- (sp_action);
 
-% 注释
-\node[right=0.3cm of mr_disk1, font=\scriptsize, text=red, align=left] {每次中间结果\\写入磁盘};
-\node[left=0.3cm of sp_t2, font=\scriptsize, text=blue!70!black, align=left] {中间结果\\保持在内存};
+% 注释 - 放在两列中间
+\node[font=\scriptsize, text=red, align=center] at ($(mr_disk1)!0.5!(sp_t2)$) {$\longleftarrow$ 每次写入磁盘};
+\node[font=\scriptsize, text=blue!70!black, align=center] at ($(mr_reduce)!0.5!(sp_t3)$) {中间结果在内存 $\longrightarrow$};
 
 \end{tikzpicture}
 \caption{MapReduce vs Spark 数据流对比}
