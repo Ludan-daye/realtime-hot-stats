@@ -1,0 +1,743 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>实时热门统计系统 — Spark Structured Streaming + Kafka</title>
+<script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
+<style>
+/* ── Reset & Base ──────────────────────────── */
+*{margin:0;padding:0;box-sizing:border-box}
+:root{
+  --bg:#0a0e17;--surface:#141d2b;--card:#1a2332;
+  --text:#e2e8f0;--muted:#8892a4;--border:rgba(255,255,255,0.08);
+  --red:#FF6B6B;--orange:#FF8E53;--yellow:#FFC857;
+  --green:#4ECDC4;--cyan:#45B7D1;--blue:#0984e3;
+  --purple:#6C5CE7;--pink:#FD79A8;
+}
+body{
+  font-family:'Inter','SF Pro Display',-apple-system,system-ui,sans-serif;
+  background:var(--bg);color:var(--text);line-height:1.6;
+  -webkit-font-smoothing:antialiased;
+}
+a{color:var(--cyan);text-decoration:none}
+a:hover{text-decoration:underline}
+
+/* ── Layout ────────────────────────────────── */
+.container{max-width:1200px;margin:0 auto;padding:0 24px}
+
+/* ── Header ────────────────────────────────── */
+.header{
+  background:linear-gradient(135deg,#1a1a2e 0%,#16213e 50%,#0f3460 100%);
+  padding:32px 0;border-bottom:1px solid var(--border);
+  position:relative;overflow:hidden;
+}
+.header::before{
+  content:'';position:absolute;top:-50%;right:-20%;width:500px;height:500px;
+  background:radial-gradient(circle,rgba(69,183,209,0.08) 0%,transparent 70%);
+}
+.header h1{font-size:28px;font-weight:800;letter-spacing:-0.5px}
+.header p{color:var(--muted);font-size:14px;margin-top:6px}
+.header-badges{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}
+.badge{
+  display:inline-flex;align-items:center;gap:5px;
+  padding:4px 12px;border-radius:20px;font-size:12px;font-weight:600;
+  background:rgba(255,255,255,0.06);border:1px solid rgba(255,255,255,0.1);
+}
+.badge-dot{width:7px;height:7px;border-radius:50%;background:#00B894}
+
+/* ── Nav Tabs ──────────────────────────────── */
+.nav{
+  background:var(--surface);border-bottom:1px solid var(--border);
+  position:sticky;top:0;z-index:100;backdrop-filter:blur(12px);
+}
+.nav-inner{display:flex;gap:0;overflow-x:auto}
+.nav-tab{
+  padding:14px 22px;font-size:14px;font-weight:600;color:var(--muted);
+  cursor:pointer;border-bottom:2px solid transparent;
+  transition:all .2s;white-space:nowrap;background:transparent;border-top:none;border-left:none;border-right:none;
+}
+.nav-tab:hover{color:var(--text);background:rgba(255,255,255,0.03)}
+.nav-tab.active{color:var(--cyan);border-bottom-color:var(--cyan)}
+
+/* ── Sections ──────────────────────────────── */
+.section{display:none;padding:32px 0;min-height:calc(100vh - 160px)}
+.section.active{display:block}
+.section-title{font-size:22px;font-weight:700;margin-bottom:24px}
+
+/* ── Cards ─────────────────────────────────── */
+.card{
+  background:var(--card);border:1px solid var(--border);
+  border-radius:14px;padding:20px;
+}
+.card-grid{display:grid;gap:20px}
+.card-grid-4{grid-template-columns:repeat(4,1fr)}
+.card-grid-3{grid-template-columns:repeat(3,1fr)}
+.card-grid-2{grid-template-columns:repeat(2,1fr)}
+@media(max-width:900px){
+  .card-grid-4,.card-grid-3{grid-template-columns:repeat(2,1fr)}
+}
+@media(max-width:600px){
+  .card-grid-4,.card-grid-3,.card-grid-2{grid-template-columns:1fr}
+}
+
+/* ── Metric Cards ──────────────────────────── */
+.metric{text-align:center;padding:20px 16px}
+.metric-label{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:1.5px;margin-bottom:8px}
+.metric-value{font-size:28px;font-weight:800}
+
+/* ── Ranking Table ─────────────────────────── */
+.rank-table{width:100%;border-collapse:collapse;font-size:14px}
+.rank-table th{
+  text-align:left;padding:10px 14px;color:var(--muted);font-size:12px;
+  text-transform:uppercase;letter-spacing:1px;border-bottom:1px solid var(--border);
+}
+.rank-table td{padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.04)}
+.rank-table tr:hover td{background:rgba(255,255,255,0.02)}
+.rank-badge{
+  display:inline-flex;align-items:center;justify-content:center;
+  width:26px;height:26px;border-radius:50%;font-size:12px;font-weight:700;color:#fff;
+}
+.rb-1{background:#FFD700}.rb-2{background:#C0C0C0}.rb-3{background:#CD7F32}.rb-n{background:#4a5568}
+.cat-tag{
+  display:inline-block;padding:2px 10px;border-radius:12px;font-size:11px;font-weight:600;
+  background:rgba(69,183,209,0.15);color:var(--cyan);
+}
+
+/* ── Sub Tabs ──────────────────────────────── */
+.sub-tabs{display:flex;gap:0;margin-bottom:20px;border-bottom:1px solid var(--border)}
+.sub-tab{
+  padding:10px 18px;font-size:13px;font-weight:600;color:var(--muted);
+  cursor:pointer;border-bottom:2px solid transparent;transition:all .2s;
+  background:transparent;border-top:none;border-left:none;border-right:none;
+}
+.sub-tab.active{color:var(--green);border-bottom-color:var(--green)}
+
+/* ── Comparison Table ──────────────────────── */
+.cmp-table{width:100%;border-collapse:collapse;font-size:13px}
+.cmp-table th{padding:10px 14px;background:rgba(255,255,255,0.04);text-align:left;font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:1px}
+.cmp-table td{padding:10px 14px;border-bottom:1px solid rgba(255,255,255,0.04)}
+.cmp-table tr:hover td{background:rgba(255,255,255,0.02)}
+
+/* ── Architecture ──────────────────────────── */
+.arch-text{
+  background:rgba(0,0,0,0.3);border-radius:12px;padding:24px;
+  font-family:'SF Mono','Fira Code',monospace;font-size:13px;
+  line-height:1.7;color:var(--muted);overflow-x:auto;white-space:pre;
+}
+.tech-card{padding:16px}
+.tech-card h4{font-size:14px;margin-bottom:8px;color:var(--text)}
+.tech-card ul{list-style:none;font-size:13px;color:var(--muted)}
+.tech-card li{padding:3px 0}
+.tech-card li::before{content:'·';margin-right:8px;color:var(--cyan)}
+
+/* ══════════════════════════════════════════════
+   ANIMATION SCENE
+   ══════════════════════════════════════════════ */
+.anim-wrapper{
+  background:linear-gradient(160deg,#0a0e17 0%,#141d2b 50%,#0d1520 100%);
+  border-radius:16px;border:1px solid var(--border);
+  padding:20px 16px;position:relative;overflow:hidden;
+}
+.anim-wrapper .bg-dots{
+  position:absolute;top:0;left:0;width:100%;height:100%;
+  background-image:
+    radial-gradient(circle at 20% 30%,rgba(108,92,231,0.06) 0%,transparent 50%),
+    radial-gradient(circle at 80% 70%,rgba(0,184,148,0.06) 0%,transparent 50%),
+    linear-gradient(rgba(255,255,255,0.015) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(255,255,255,0.015) 1px,transparent 1px);
+  background-size:100% 100%,100% 100%,50px 50px,50px 50px;
+  pointer-events:none;
+}
+
+.anim-row{
+  display:flex;justify-content:center;gap:14px;position:relative;z-index:2;
+  padding:0 8px;
+}
+
+.anim-stage{
+  border-radius:13px;padding:12px 15px;position:relative;flex:0 1 31%;
+  max-width:280px;min-width:160px;
+  box-shadow:0 6px 24px rgba(0,0,0,0.35);
+  transition:transform .25s,box-shadow .25s;
+}
+.anim-stage:hover{transform:translateY(-3px);box-shadow:0 10px 36px rgba(0,0,0,0.5)}
+
+.as-badge{
+  position:absolute;top:-9px;left:-9px;width:26px;height:26px;border-radius:50%;
+  background:rgba(255,255,255,0.12);backdrop-filter:blur(6px);
+  border:1px solid rgba(255,255,255,0.2);display:flex;align-items:center;
+  justify-content:center;font-size:11px;font-weight:800;color:#fff;
+}
+.as-icon{float:right;font-size:18px}
+.as-title{font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:1.5px;opacity:.7;color:#fff;margin-bottom:3px}
+.as-name{font-size:14px;font-weight:800;color:#fff;margin-bottom:3px}
+.as-desc{font-size:10px;color:rgba(255,255,255,0.72);line-height:1.45}
+.as-desc code{background:rgba(255,255,255,0.1);padding:1px 4px;border-radius:3px;font-size:9.5px;font-family:'SF Mono','Fira Code',monospace}
+
+.sg{background:linear-gradient(135deg,#6C5CE7,#a29bfe)}
+.sk{background:linear-gradient(135deg,#e17055,#fdcb6e)}
+.ss{background:linear-gradient(135deg,#0984e3,#74b9ff)}
+.sw{background:linear-gradient(135deg,#00b894,#55efc4)}
+.st{background:linear-gradient(135deg,#e84393,#fd79a8)}
+.so{background:linear-gradient(135deg,#636e72,#b2bec3)}
+.sb{background:linear-gradient(135deg,#2d3436,#636e72);border:1px solid rgba(255,255,255,0.08)}
+.sd{background:linear-gradient(135deg,#d63031,#ff7675)}
+.su{background:linear-gradient(135deg,#f39c12,#fdcb6e)}
+
+/* Arrow SVG rows */
+.arrow-row-svg{text-align:center;position:relative;z-index:1;height:32px}
+.arrow-row-svg svg{display:block;margin:0 auto}
+.arr-path{fill:none;stroke:rgba(255,255,255,0.15);stroke-width:2;stroke-dasharray:7 4}
+
+/* Layer labels */
+.layer-lbl{text-align:center;padding:4px 0;position:relative;z-index:2}
+.layer-tag{
+  display:inline-block;padding:3px 16px;border-radius:16px;
+  font-size:10px;font-weight:700;letter-spacing:1.5px;
+  backdrop-filter:blur(6px);
+}
+.lt-sp{background:rgba(9,132,227,0.12);border:1px solid rgba(116,185,255,0.2);color:rgba(116,185,255,0.85)}
+.lt-sv{background:rgba(214,48,49,0.1);border:1px solid rgba(255,118,117,0.2);color:rgba(255,118,117,0.85)}
+
+/* Kafka queue animation */
+.kq{display:flex;gap:3px;background:rgba(0,0,0,0.2);border-radius:6px;padding:4px 8px;margin-top:6px;overflow:hidden}
+.kq-c{
+  width:20px;height:18px;border-radius:3px;display:flex;align-items:center;
+  justify-content:center;font-size:8px;font-weight:800;color:#2d3436;flex-shrink:0;
+  animation:kqP 2.4s ease-in-out infinite;
+}
+.kq-b{background:rgba(253,203,110,0.65)}.kq-s{background:rgba(255,118,117,0.65)}
+.kq-c:nth-child(1){animation-delay:0s}.kq-c:nth-child(2){animation-delay:.3s}
+.kq-c:nth-child(3){animation-delay:.6s}.kq-c:nth-child(4){animation-delay:.9s}
+.kq-c:nth-child(5){animation-delay:1.2s}.kq-c:nth-child(6){animation-delay:1.5s}
+.kq-c:nth-child(7){animation-delay:1.8s}.kq-c:nth-child(8){animation-delay:2.1s}
+@keyframes kqP{0%,100%{transform:scale(.8);opacity:.35}50%{transform:scale(1.1);opacity:1}}
+
+/* DAG nodes */
+.dag-r{display:flex;align-items:center;gap:3px;background:rgba(0,0,0,0.2);border-radius:6px;padding:5px 8px;margin-top:6px}
+.dag-d{width:14px;height:14px;border-radius:50%;flex-shrink:0}
+.dag-1{background:#74b9ff;animation:dP 1.8s ease-in-out infinite}
+.dag-2{background:#0984e3;animation:dP 1.8s ease-in-out .3s infinite}
+.dag-3{background:#0652DD;animation:dP 1.8s ease-in-out .6s infinite}
+.dag-a{color:rgba(255,255,255,0.35);font-size:10px}
+.dag-l{font-size:8px;color:rgba(116,185,255,0.6);margin-left:3px}
+@keyframes dP{0%,100%{transform:scale(1);box-shadow:none}50%{transform:scale(1.3);box-shadow:0 0 8px currentColor}}
+
+/* Sliding window */
+.swb{width:100%;height:10px;background:rgba(0,0,0,0.2);border-radius:5px;position:relative;overflow:hidden;margin-top:6px}
+.swf{position:absolute;top:0;height:100%;width:35%;background:rgba(0,184,148,0.4);border:1.5px solid rgba(85,239,196,0.6);border-radius:4px;animation:swS 3.5s ease-in-out infinite}
+.sw-l{font-size:8px;color:rgba(85,239,196,0.6);text-align:center;margin-top:2px}
+@keyframes swS{0%,100%{left:0}50%{left:65%}}
+
+/* Watermark */
+.wmb{width:100%;height:3px;background:rgba(232,67,147,0.12);border-radius:2px;position:relative;margin-top:5px}
+.wmd{position:absolute;top:-3px;width:9px;height:9px;border-radius:50%;background:#e84393;box-shadow:0 0 6px rgba(232,67,147,0.4);animation:wmS 2.8s ease-in-out infinite}
+.wml{display:flex;justify-content:space-between;font-size:8px;color:rgba(232,67,147,0.5);margin-top:2px}
+@keyframes wmS{0%,100%{left:0}50%{left:calc(100% - 9px)}}
+
+/* Throughput counter */
+.tpb{background:rgba(0,0,0,0.25);border:1px solid rgba(255,255,255,0.08);border-radius:7px;padding:5px 10px;text-align:center;margin-top:6px}
+.tpv{font-size:16px;font-weight:800;color:#dfe6e9;font-variant-numeric:tabular-nums}
+.tpl{font-size:8px;color:rgba(223,230,233,0.45);margin-top:1px}
+
+/* Data flow dots (SVG animated) */
+.flow-dot{r:3.5;opacity:0}
+
+/* Step explain row */
+.step-row{display:grid;grid-template-columns:repeat(5,1fr);gap:16px;margin-top:20px}
+.step-item h4{font-size:13px;color:var(--cyan);margin-bottom:4px}
+.step-item p{font-size:12px;color:var(--muted);line-height:1.5}
+@media(max-width:768px){.step-row{grid-template-columns:repeat(2,1fr)}}
+
+/* ── Footer ────────────────────────────────── */
+.footer{
+  text-align:center;padding:32px 0;border-top:1px solid var(--border);
+  color:var(--muted);font-size:13px;margin-top:40px;
+}
+</style>
+</head>
+<body>
+
+<!-- ═══ Header ═══ -->
+<div class="header">
+  <div class="container">
+    <h1>实时热门统计系统</h1>
+    <p>基于 Spark Structured Streaming + Kafka 的实时数据分析平台</p>
+    <div class="header-badges">
+      <span class="badge"><span class="badge-dot"></span>Spark 3.5</span>
+      <span class="badge"><span class="badge-dot"></span>Kafka 3.6 KRaft</span>
+      <span class="badge"><span class="badge-dot"></span>PySpark</span>
+      <span class="badge"><span class="badge-dot"></span>Docker Compose</span>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Nav ═══ -->
+<div class="nav">
+  <div class="container">
+    <div class="nav-inner">
+      <button class="nav-tab active" onclick="showTab('overview')">📊 总览</button>
+      <button class="nav-tab" onclick="showTab('animation')">🎬 流程动画</button>
+      <button class="nav-tab" onclick="showTab('products')">🔥 热门商品</button>
+      <button class="nav-tab" onclick="showTab('keywords')">🔍 热搜词</button>
+      <button class="nav-tab" onclick="showTab('perf')">⚡ 性能对比</button>
+      <button class="nav-tab" onclick="showTab('arch')">🏗️ 架构</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     Section: 总览
+     ═══════════════════════════════════════════ -->
+<div id="sec-overview" class="section active">
+  <div class="container">
+    <div class="card-grid card-grid-4" style="margin-bottom:28px">
+      <div class="card metric">
+        <div class="metric-label">实时热门商品 #1</div>
+        <div class="metric-value" style="color:var(--red)">手机壳</div>
+      </div>
+      <div class="card metric">
+        <div class="metric-label">实时热搜词 #1</div>
+        <div class="metric-value" style="color:var(--green)">蓝牙耳机</div>
+      </div>
+      <div class="card metric">
+        <div class="metric-label">批处理记录数</div>
+        <div class="metric-value" style="color:var(--cyan)">50,000</div>
+      </div>
+      <div class="card metric">
+        <div class="metric-label">批处理吞吐量</div>
+        <div class="metric-value" style="color:var(--purple)">6,063/s</div>
+      </div>
+    </div>
+
+    <div class="card-grid card-grid-2" style="margin-bottom:28px">
+      <div class="card"><h3 style="margin-bottom:12px">热门商品 Top 5</h3><div id="chart-overview-prod"></div></div>
+      <div class="card"><h3 style="margin-bottom:12px">热搜词 Top 5</h3><div id="chart-overview-kw"></div></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin-bottom:12px">商品类目浏览量分布</h3>
+      <div id="chart-overview-cat"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     Section: 流程动画
+     ═══════════════════════════════════════════ -->
+<div id="sec-animation" class="section">
+  <div class="container">
+    <div class="anim-wrapper">
+      <div class="bg-dots"></div>
+
+      <!-- Row 1 -->
+      <div class="anim-row" style="margin-top:10px">
+        <div class="anim-stage sg"><div class="as-badge">1</div><span class="as-icon">📦</span>
+          <div class="as-title">Data Producer</div><div class="as-name">数据生产层</div>
+          <div class="as-desc">Zipf 分布 (α=1.2) 加权随机<br>50 商品 · 15 类目 · 40 关键词<br>支持 <code>--rate 100~2000</code></div>
+        </div>
+        <div class="anim-stage sk"><div class="as-badge">2</div><span class="as-icon">📨</span>
+          <div class="as-title">Message Queue</div><div class="as-name">Apache Kafka</div>
+          <div class="as-desc">KRaft 模式（无 Zookeeper）<br><code>user_browse</code> 70%  <code>user_search</code> 30%</div>
+          <div class="kq"><div class="kq-c kq-b">B</div><div class="kq-c kq-b">B</div><div class="kq-c kq-s">S</div><div class="kq-c kq-b">B</div><div class="kq-c kq-b">B</div><div class="kq-c kq-s">S</div><div class="kq-c kq-b">B</div><div class="kq-c kq-b">B</div></div>
+        </div>
+        <div class="anim-stage ss"><div class="as-badge">3</div><span class="as-icon">⚡</span>
+          <div class="as-title">Stream Engine</div><div class="as-name">Spark Streaming</div>
+          <div class="as-desc">Structured Streaming<br>微批次触发 10s · Lazy Eval → DAG</div>
+          <div class="dag-r"><div class="dag-d dag-1"></div><span class="dag-a">→</span><div class="dag-d dag-2"></div><span class="dag-a">→</span><div class="dag-d dag-3"></div><span class="dag-l">Read → Transform → Agg</span></div>
+        </div>
+      </div>
+
+      <!-- Arrow 1 -->
+      <div class="arrow-row-svg">
+        <svg width="700" height="32" viewBox="0 0 700 32" style="max-width:100%">
+          <defs><marker id="a1" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto"><polygon points="0 0,7 2.5,0 5" fill="rgba(116,185,255,0.35)"/></marker></defs>
+          <path d="M115 2 Q115 16 175 28" class="arr-path" marker-end="url(#a1)"/>
+          <path d="M350 2 L350 28" class="arr-path" marker-end="url(#a1)"/>
+          <path d="M575 2 Q575 16 510 28" class="arr-path" marker-end="url(#a1)"/>
+          <circle class="flow-dot" fill="#a29bfe"><animateMotion dur="2s" repeatCount="indefinite" path="M115 2 Q115 16 175 28"/><animate attributeName="opacity" values="0;1;1;0" dur="2s" repeatCount="indefinite"/></circle>
+          <circle class="flow-dot" fill="#fdcb6e"><animateMotion dur="1.6s" repeatCount="indefinite" path="M350 2 L350 28" begin=".4s"/><animate attributeName="opacity" values="0;1;1;0" dur="1.6s" repeatCount="indefinite" begin=".4s"/></circle>
+          <circle class="flow-dot" fill="#74b9ff"><animateMotion dur="2s" repeatCount="indefinite" path="M575 2 Q575 16 510 28" begin=".2s"/><animate attributeName="opacity" values="0;1;1;0" dur="2s" repeatCount="indefinite" begin=".2s"/></circle>
+        </svg>
+      </div>
+
+      <div class="layer-lbl"><span class="layer-tag lt-sp">SPEED LAYER — 实时处理</span></div>
+
+      <!-- Row 2 -->
+      <div class="anim-row" style="margin-top:6px">
+        <div class="anim-stage sw"><div class="as-badge">4</div><span class="as-icon">🪟</span>
+          <div class="as-title">Windowing</div><div class="as-name">滑动窗口聚合</div>
+          <div class="as-desc">Watermark 30s 迟到容忍<br>窗口 5min · 步长 1min<br>按商品/关键词 GroupBy 计数</div>
+          <div class="swb"><div class="swf"></div></div><div class="sw-l">← 滑动窗口移动 →</div>
+          <div class="wmb"><div class="wmd"></div></div>
+          <div class="wml"><span>event time</span><span>watermark -30s</span></div>
+        </div>
+        <div class="anim-stage st"><div class="as-badge">5</div><span class="as-icon">🏆</span>
+          <div class="as-title">Ranking</div><div class="as-name">foreachBatch</div>
+          <div class="as-desc">每微批次提取 Top-10<br>嵌入 producer 时间戳<br>计算端到端延迟 (ms)</div>
+          <div class="tpb"><div class="tpv" id="tpC">0</div><div class="tpl">已处理事件</div></div>
+        </div>
+        <div class="anim-stage so"><div class="as-badge">6</div><span class="as-icon">💾</span>
+          <div class="as-title">Storage</div><div class="as-name">结果输出</div>
+          <div class="as-desc"><code>stream_results/</code><br>hot_products · hot_keywords<br>Checkpoint 容错恢复</div>
+        </div>
+      </div>
+
+      <!-- Arrow 2 -->
+      <div class="arrow-row-svg">
+        <svg width="700" height="32" viewBox="0 0 700 32" style="max-width:100%">
+          <defs><marker id="a2" markerWidth="7" markerHeight="5" refX="7" refY="2.5" orient="auto"><polygon points="0 0,7 2.5,0 5" fill="rgba(255,118,117,0.35)"/></marker></defs>
+          <path d="M175 2 Q260 16 350 28" class="arr-path" marker-end="url(#a2)"/>
+          <path d="M350 2 L350 28" class="arr-path" marker-end="url(#a2)"/>
+          <path d="M520 2 Q440 16 350 28" class="arr-path" marker-end="url(#a2)"/>
+          <circle class="flow-dot" fill="#55efc4"><animateMotion dur="2.2s" repeatCount="indefinite" path="M175 2 Q260 16 350 28"/><animate attributeName="opacity" values="0;1;1;0" dur="2.2s" repeatCount="indefinite"/></circle>
+          <circle class="flow-dot" fill="#fd79a8"><animateMotion dur="1.6s" repeatCount="indefinite" path="M350 2 L350 28" begin=".5s"/><animate attributeName="opacity" values="0;1;1;0" dur="1.6s" repeatCount="indefinite" begin=".5s"/></circle>
+          <circle class="flow-dot" fill="#ff7675"><animateMotion dur="2s" repeatCount="indefinite" path="M520 2 Q440 16 350 28" begin=".7s"/><animate attributeName="opacity" values="0;1;1;0" dur="2s" repeatCount="indefinite" begin=".7s"/></circle>
+        </svg>
+      </div>
+
+      <div class="layer-lbl"><span class="layer-tag lt-sv">SERVING LAYER — 可视化与展示</span></div>
+
+      <!-- Row 3 -->
+      <div class="anim-row" style="margin-top:6px;padding-bottom:12px">
+        <div class="anim-stage sb"><div class="as-badge">B</div><span class="as-icon">📊</span>
+          <div class="as-title">Batch Layer</div><div class="as-name">批处理对比</div>
+          <div class="as-desc">读取 <code>sample_batch.json</code><br>全量聚合 · 性能计时<br>吞吐量 ~6,000 条/秒</div>
+        </div>
+        <div class="anim-stage sd"><div class="as-badge">7</div><span class="as-icon">📈</span>
+          <div class="as-title">Visualization</div><div class="as-name">Streamlit 仪表盘</div>
+          <div class="as-desc">实时 Top-10 排行榜<br>流批性能雷达图对比<br>自动刷新 · Plotly 图表</div>
+        </div>
+        <div class="anim-stage su"><div class="as-badge">8</div><span class="as-icon">🎓</span>
+          <div class="as-title">Presentation</div><div class="as-name">课程演示</div>
+          <div class="as-desc">Spark UI · DAG 截图<br>容错恢复 Demo<br>流批定量对比分析</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Step explain -->
+    <div class="step-row">
+      <div class="step-item"><h4>Step 1-2</h4><p>Zipf 分布生成事件，通过 Kafka KRaft 分发到两个 Topic</p></div>
+      <div class="step-item"><h4>Step 3</h4><p>Spark Structured Streaming 以 10s 微批次消费 Kafka 消息</p></div>
+      <div class="step-item"><h4>Step 4-5</h4><p>滑动窗口聚合 + Watermark 处理迟到数据，每批次取 Top-10</p></div>
+      <div class="step-item"><h4>Step 6</h4><p>结果写入 JSON 文件，Checkpoint 确保 Exactly-Once 容错</p></div>
+      <div class="step-item"><h4>Step 7-8</h4><p>Streamlit 仪表盘实时展示，支持课程演示和容错恢复 Demo</p></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     Section: 热门商品
+     ═══════════════════════════════════════════ -->
+<div id="sec-products" class="section">
+  <div class="container">
+    <h2 class="section-title">实时热门商品 Top 10</h2>
+    <div class="sub-tabs">
+      <button class="sub-tab active" onclick="showSubTab('prod',this,'prod-stream')">流处理结果</button>
+      <button class="sub-tab" onclick="showSubTab('prod',this,'prod-batch')">批处理结果</button>
+      <button class="sub-tab" onclick="showSubTab('prod',this,'prod-compare')">流批对比</button>
+    </div>
+    <div id="prod-stream" class="sub-content active">
+      <div id="chart-prod-stream"></div>
+      <div id="table-prod-stream" style="margin-top:16px"></div>
+    </div>
+    <div id="prod-batch" class="sub-content" style="display:none">
+      <div id="chart-prod-batch"></div>
+      <div id="table-prod-batch" style="margin-top:16px"></div>
+    </div>
+    <div id="prod-compare" class="sub-content" style="display:none">
+      <div id="chart-prod-compare"></div>
+      <p style="margin-top:12px;font-size:13px;color:var(--muted)">注：流处理统计的是最近一个滑动窗口内的数据，批处理统计的是全量数据，因此数值量级不同。</p>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     Section: 热搜词
+     ═══════════════════════════════════════════ -->
+<div id="sec-keywords" class="section">
+  <div class="container">
+    <h2 class="section-title">实时热搜词 Top 10</h2>
+    <div class="sub-tabs">
+      <button class="sub-tab active" onclick="showSubTab('kw',this,'kw-stream')">流处理结果</button>
+      <button class="sub-tab" onclick="showSubTab('kw',this,'kw-batch')">批处理结果</button>
+    </div>
+    <div id="kw-stream" class="sub-content active">
+      <div id="chart-kw-stream"></div>
+      <div id="table-kw-stream" style="margin-top:16px"></div>
+    </div>
+    <div id="kw-batch" class="sub-content" style="display:none">
+      <div id="chart-kw-batch"></div>
+      <div id="table-kw-batch" style="margin-top:16px"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     Section: 性能对比
+     ═══════════════════════════════════════════ -->
+<div id="sec-perf" class="section">
+  <div class="container">
+    <h2 class="section-title">流处理 vs 批处理 性能对比</h2>
+    <div class="card-grid card-grid-3" style="margin-bottom:28px">
+      <div class="card metric"><div class="metric-label">批处理总耗时</div><div class="metric-value" style="color:var(--red)">8.2s</div></div>
+      <div class="card metric"><div class="metric-label">批处理吞吐量</div><div class="metric-value" style="color:var(--green)">6,063/s</div></div>
+      <div class="card metric"><div class="metric-label">流处理微批次间隔</div><div class="metric-value" style="color:var(--cyan)">10s</div></div>
+    </div>
+
+    <div class="card-grid card-grid-2" style="margin-bottom:28px">
+      <div class="card"><h3 style="margin-bottom:12px">批处理各阶段耗时</h3><div id="chart-perf-stages"></div></div>
+      <div class="card"><h3 style="margin-bottom:12px">耗时占比</h3><div id="chart-perf-pie"></div></div>
+    </div>
+
+    <div class="card-grid card-grid-2">
+      <div class="card"><h3 style="margin-bottom:12px">特性雷达图</h3><div id="chart-perf-radar"></div></div>
+      <div class="card" style="display:flex;flex-direction:column;justify-content:center">
+        <h3 style="margin-bottom:12px">对比总结</h3>
+        <table class="cmp-table">
+          <tr><th>指标</th><th>流处理</th><th>批处理</th></tr>
+          <tr><td>首条结果延迟</td><td>秒级</td><td>8.2s</td></tr>
+          <tr><td>端到端延迟</td><td>~10-15s</td><td>8.2s</td></tr>
+          <tr><td>吞吐量</td><td>受微批次限制</td><td>6,063/s</td></tr>
+          <tr><td>适用场景</td><td>实时监控/告警</td><td>离线报表/分析</td></tr>
+          <tr><td>资源占用</td><td>持续占用</td><td>按需启动</td></tr>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══════════════════════════════════════════
+     Section: 架构
+     ═══════════════════════════════════════════ -->
+<div id="sec-arch" class="section">
+  <div class="container">
+    <h2 class="section-title">系统架构</h2>
+    <div class="arch-text">┌─────────────────────────────────────────────────────────────────┐
+│                        数据生产层                                 │
+│  data_generator.py ──→ kafka_producer.py ──→ Kafka (KRaft)      │
+│  (Zipf 分布加权)        (--rate, --late-ratio)    ┌──────────┐  │
+│                                                   │user_browse│  │
+│                                                   │user_search│  │
+│                                                   └──────────┘  │
+└───────────────────────────────┬─────────────────────────────────┘
+                                │
+                ┌───────────────┴───────────────┐
+                ▼                               ▼
+┌──────────────────────────┐  ┌──────────────────────────────┐
+│     Speed Layer          │  │       Batch Layer             │
+│  Structured Streaming    │  │   Spark Batch Job             │
+│  · Watermark 30s         │  │   · 读取静态 JSON              │
+│  · 滑动窗口 5min/1min     │  │   · 全量聚合统计               │
+│  · foreachBatch Top-10   │  │   · 性能计时                   │
+└──────────┬───────────────┘  └──────────────┬───────────────┘
+           │                                  │
+           ▼                                  ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                      Serving Layer                              │
+│   output/stream_results/     output/batch_results/              │
+│          └──────────┬──────────────┘                            │
+│                     ▼                                           │
+│              Streamlit Dashboard (localhost:8501)                │
+└─────────────────────────────────────────────────────────────────┘</div>
+
+    <div class="card-grid card-grid-3" style="margin-top:28px">
+      <div class="card tech-card"><h4>Kafka</h4><ul><li>KRaft 模式 (无 Zookeeper)</li><li>Topic: user_browse, user_search</li><li>事件比例: 7:3</li></ul></div>
+      <div class="card tech-card"><h4>Spark Streaming</h4><ul><li>Watermark: 30 秒</li><li>窗口: 5min 滑动, 1min 步长</li><li>触发间隔: 10s (微批次)</li><li>Checkpoint 容错</li></ul></div>
+      <div class="card tech-card"><h4>数据生成</h4><ul><li>商品: 50 种, 15 类目</li><li>关键词: 40 个</li><li>Zipf 分布 (α=1.2)</li><li>迟到数据支持</li></ul></div>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ Footer ═══ -->
+<div class="footer">
+  <div class="container">
+    BITMZ043 云计算与大数据分析 · 课程项目 · Spark Structured Streaming + Kafka<br>
+    <a href="https://github.com/Ludan-daye/realtime-hot-stats" target="_blank">GitHub: Ludan-daye/realtime-hot-stats</a>
+  </div>
+</div>
+
+<script>
+/* ═══ Data ═══ */
+const DATA = {
+  streamProd: [
+    {name:"手机壳",cat:"配件",val:75},{name:"运动鞋",cat:"运动",val:74},{name:"机械键盘",cat:"数码",val:64}
+  ],
+  streamKw: [
+    {name:"蓝牙耳机",val:531},{name:"运动鞋",val:491},{name:"防晒霜",val:446},
+    {name:"T恤 男",val:422},{name:"智能手表",val:413},{name:"手机壳",val:406},
+    {name:"保温杯",val:400},{name:"机械键盘",val:390},{name:"连衣裙 夏季",val:389},{name:"空气炸锅",val:378}
+  ],
+  batchProd: [
+    {name:"无线蓝牙耳机",cat:"数码",val:1242},{name:"手机壳",cat:"配件",val:1125},
+    {name:"运动鞋",cat:"运动",val:1116},{name:"空气炸锅",cat:"家电",val:1040},
+    {name:"机械键盘",cat:"数码",val:1033},{name:"T恤",cat:"服装",val:1029},
+    {name:"降噪耳机",cat:"数码",val:989},{name:"防晒霜",cat:"美妆",val:946},
+    {name:"充电线",cat:"配件",val:912},{name:"保温杯",cat:"生活",val:910}
+  ],
+  batchKw: [
+    {name:"蓝牙耳机",val:668},{name:"手机壳",val:605},{name:"运动鞋",val:575},
+    {name:"防晒霜",val:561},{name:"空气炸锅",val:545},{name:"机械键盘",val:528},
+    {name:"T恤 男",val:494},{name:"保温杯",val:471},{name:"智能手表",val:465},{name:"连衣裙 夏季",val:465}
+  ],
+  categories: [
+    {name:"数码",val:10747},{name:"家电",val:4294},{name:"配件",val:2693},
+    {name:"服装",val:2637},{name:"美妆",val:2481},{name:"运动",val:2156},
+    {name:"生活",val:2103},{name:"食品",val:1547},{name:"个护",val:1518},
+    {name:"箱包",val:1031},{name:"保健",val:939},{name:"图书",val:907},
+    {name:"办公",val:671},{name:"母婴",val:639},{name:"家居",val:637}
+  ],
+  perf: {total:8.25, load:3.35, hotProd:1.12, windowed:2.04, hotKw:0.48, catStats:0.5, throughput:6063}
+};
+
+const COLORS = ['#FF6B6B','#FF8E53','#FFC857','#4ECDC4','#45B7D1','#6C5CE7','#A29BFE','#FD79A8','#FDCB6E','#00B894'];
+const CAT_COLORS = {数码:'#45B7D1',家电:'#FF6B6B',配件:'#FFC857',运动:'#4ECDC4',美妆:'#FD79A8',食品:'#00B894',家居:'#6C5CE7',服装:'#A29BFE',图书:'#FDCB6E',母婴:'#E17055',办公:'#74B9FF',箱包:'#81ECEC',生活:'#55EFC4',个护:'#FAB1A0',保健:'#DFE6E9'};
+
+const LAYOUT_DARK = {
+  paper_bgcolor:'transparent',plot_bgcolor:'transparent',
+  font:{color:'#8892a4',family:'Inter,system-ui,sans-serif'},
+  margin:{l:10,r:30,t:10,b:10},
+  xaxis:{gridcolor:'rgba(255,255,255,0.05)'},
+  yaxis:{gridcolor:'rgba(255,255,255,0.05)'},
+};
+
+/* ═══ Tab Navigation ═══ */
+function showTab(id) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('sec-'+id).classList.add('active');
+  event.target.classList.add('active');
+  // Trigger Plotly resize for the newly visible section
+  setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+}
+
+function showSubTab(group, btn, contentId) {
+  const parent = btn.closest('.container');
+  parent.querySelectorAll('.sub-tab').forEach(t => t.classList.remove('active'));
+  parent.querySelectorAll('.sub-content').forEach(c => {c.style.display='none';c.classList.remove('active')});
+  btn.classList.add('active');
+  const el = document.getElementById(contentId);
+  el.style.display='block';el.classList.add('active');
+  setTimeout(() => window.dispatchEvent(new Event('resize')), 50);
+}
+
+/* ═══ Helpers ═══ */
+function hBar(divId, items, valKey, nameKey, colorScale) {
+  const names = items.map(i=>i[nameKey]).reverse();
+  const vals = items.map(i=>i[valKey]).reverse();
+  const colors = colorScale ? vals.map((_,i)=> {
+    const t = i/(vals.length-1||1);
+    return colorScale[Math.round(t*(colorScale.length-1))];
+  }) : COLORS;
+  Plotly.newPlot(divId, [{
+    type:'bar',orientation:'h',x:vals,y:names,
+    marker:{color:colors},
+    text:vals.map(v=>v.toLocaleString()),textposition:'outside',
+    textfont:{color:'#8892a4',size:12},
+  }], {...LAYOUT_DARK, height:Math.max(280, items.length*38), yaxis:{...LAYOUT_DARK.yaxis,title:''}}, {responsive:true,displayModeBar:false});
+}
+
+function hBarCat(divId, items) {
+  const names = items.map(i=>i.name).reverse();
+  const vals = items.map(i=>i.val).reverse();
+  const cats = items.map(i=>i.cat).reverse();
+  const colors = cats.map(c => CAT_COLORS[c]||'#8892a4');
+  Plotly.newPlot(divId, [{
+    type:'bar',orientation:'h',x:vals,y:names,
+    marker:{color:colors},
+    text:vals.map(v=>v.toLocaleString()),textposition:'outside',
+    textfont:{color:'#8892a4',size:12},
+  }], {...LAYOUT_DARK, height:Math.max(280, items.length*38), yaxis:{...LAYOUT_DARK.yaxis,title:''}}, {responsive:true,displayModeBar:false});
+}
+
+function rankTable(divId, items, nameKey, valKey, valLabel) {
+  let html = '<table class="rank-table"><tr><th style="width:40px">#</th><th>名称</th><th style="text-align:right">'+valLabel+'</th></tr>';
+  items.forEach((item,i) => {
+    const cls = i<3 ? 'rb-'+(i+1) : 'rb-n';
+    html += `<tr><td><span class="rank-badge ${cls}">${i+1}</span></td><td><b>${item[nameKey]}</b></td><td style="text-align:right">${item[valKey].toLocaleString()}</td></tr>`;
+  });
+  html += '</table>';
+  document.getElementById(divId).innerHTML = html;
+}
+
+/* ═══ Render Charts ═══ */
+function renderAll() {
+  // Overview
+  hBar('chart-overview-prod', DATA.batchProd.slice(0,5), 'val','name',['#FFC857','#FF6B6B']);
+  hBar('chart-overview-kw', DATA.streamKw.slice(0,5), 'val','name',['#A29BFE','#6C5CE7']);
+
+  // Category pie
+  Plotly.newPlot('chart-overview-cat',[{
+    type:'pie',labels:DATA.categories.map(c=>c.name),values:DATA.categories.map(c=>c.val),
+    hole:0.45,marker:{colors:DATA.categories.map(c=>CAT_COLORS[c.name]||'#888')},
+    textinfo:'label+percent',textposition:'outside',
+    textfont:{color:'#8892a4',size:11},
+    pull:DATA.categories.map((_,i)=>i===0?0.05:0),
+  }],{...LAYOUT_DARK,height:380,showlegend:false},{responsive:true,displayModeBar:false});
+
+  // Products
+  hBarCat('chart-prod-stream', DATA.streamProd);
+  rankTable('table-prod-stream',DATA.streamProd,'name','val','浏览量');
+  hBarCat('chart-prod-batch', DATA.batchProd);
+  rankTable('table-prod-batch',DATA.batchProd,'name','val','浏览量');
+
+  // Products compare
+  const sP = DATA.streamProd, bP = DATA.batchProd.slice(0,5);
+  Plotly.newPlot('chart-prod-compare',[
+    {type:'bar',orientation:'h',name:'流处理',y:sP.map(i=>i.name).reverse(),x:sP.map(i=>i.val).reverse(),marker:{color:'#FF6B6B',opacity:.85}},
+    {type:'bar',orientation:'h',name:'批处理',y:bP.map(i=>i.name).reverse(),x:bP.map(i=>i.val).reverse(),marker:{color:'#45B7D1',opacity:.85}},
+  ],{...LAYOUT_DARK,barmode:'group',height:350,yaxis:{title:''},legend:{orientation:'h',y:-0.12,x:0.5,xanchor:'center',font:{color:'#8892a4'}}},{responsive:true,displayModeBar:false});
+
+  // Keywords
+  hBar('chart-kw-stream', DATA.streamKw, 'val','name',['#A29BFE','#6C5CE7','#4A3AFF']);
+  rankTable('table-kw-stream',DATA.streamKw,'name','val','搜索量');
+  hBar('chart-kw-batch', DATA.batchKw, 'val','name',['#55EFC4','#00B894','#00876C']);
+  rankTable('table-kw-batch',DATA.batchKw,'name','val','搜索量');
+
+  // Perf - stages bar
+  const stNames = ['数据加载','热门商品统计','窗口商品统计','热搜词统计','分类统计'];
+  const stVals = [DATA.perf.load,DATA.perf.hotProd,DATA.perf.windowed,DATA.perf.hotKw,DATA.perf.catStats];
+  const stPcts = stVals.map(v=>(v/DATA.perf.total*100).toFixed(0));
+  Plotly.newPlot('chart-perf-stages',[{
+    type:'bar',orientation:'h',y:[...stNames].reverse(),x:[...stVals].reverse(),
+    marker:{color:[...COLORS.slice(0,5)].reverse()},
+    text:[...stVals.map((v,i)=>`${v.toFixed(2)}s (${stPcts[i]}%)`)].reverse(),
+    textposition:'outside',textfont:{color:'#8892a4',size:11},
+  }],{...LAYOUT_DARK,height:280,xaxis:{title:'耗时 (秒)',titlefont:{color:'#8892a4'}},yaxis:{title:''}},{responsive:true,displayModeBar:false});
+
+  // Perf - pie
+  Plotly.newPlot('chart-perf-pie',[{
+    type:'pie',labels:stNames,values:stVals,hole:0.5,
+    marker:{colors:COLORS},textinfo:'label+percent',textposition:'inside',
+    textfont:{color:'#fff',size:10},
+  }],{...LAYOUT_DARK,height:280,showlegend:false,
+    annotations:[{text:DATA.perf.total+'s',x:0.5,y:0.5,font:{size:18,color:'#e2e8f0'},showarrow:false}]
+  },{responsive:true,displayModeBar:false});
+
+  // Perf - radar
+  const radarCats = ['延迟','吞吐量','实时性','资源效率','容错能力'];
+  Plotly.newPlot('chart-perf-radar',[
+    {type:'scatterpolar',r:[9,5,10,4,8],theta:radarCats,fill:'toself',name:'流处理',
+     line:{color:'#FF6B6B'},fillcolor:'rgba(255,107,107,0.15)'},
+    {type:'scatterpolar',r:[3,9,2,8,6],theta:radarCats,fill:'toself',name:'批处理',
+     line:{color:'#45B7D1'},fillcolor:'rgba(69,183,209,0.15)'},
+  ],{...LAYOUT_DARK,height:340,
+    polar:{bgcolor:'transparent',radialaxis:{visible:true,range:[0,10],gridcolor:'rgba(255,255,255,0.08)',color:'#8892a4'},angularaxis:{color:'#8892a4'}},
+    legend:{orientation:'h',y:-0.1,x:0.5,xanchor:'center',font:{color:'#8892a4'}},
+  },{responsive:true,displayModeBar:false});
+}
+
+/* ═══ Throughput Counter ═══ */
+let tpCount = 0;
+setInterval(() => {
+  tpCount += Math.floor(Math.random()*60)+30;
+  const el = document.getElementById('tpC');
+  if(el) el.textContent = tpCount.toLocaleString();
+}, 250);
+
+/* ═══ Init ═══ */
+document.addEventListener('DOMContentLoaded', renderAll);
+</script>
+</body>
+</html>
